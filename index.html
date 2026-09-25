@@ -245,6 +245,49 @@
     border-color: rgba(58,123,213,0.45);
     color: #82b1ff;
   }
+  .rangebar {
+    display: none;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: center;
+    background: var(--panel);
+    border-radius: 10px;
+    padding: 10px 16px;
+    margin-bottom: 14px;
+    max-width: 900px;
+    font-size: 0.9rem;
+  }
+  .rangebar.show { display: flex; }
+  .rangebar .lbl { color: var(--muted); font-weight: 600; }
+  .rangebar select {
+    background: var(--panel-light);
+    color: var(--text);
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-size: 0.9rem;
+  }
+  .rangebar .presets { display: flex; gap: 6px; flex-wrap: wrap; }
+  .rangebar .presets button {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+    padding: 5px 10px;
+    cursor: pointer;
+    font-size: 0.82rem;
+  }
+  .rangebar .presets button.on {
+    border-color: var(--gold);
+    color: var(--gold);
+  }
+  .rangebar .count { color: var(--muted); font-size: 0.82rem; }
+  .addrOptions button .optline { display: block; }
+  .addrOptions button .optline + .optline { margin-top: 4px; }
+  .addrOptions button .tagF { color: #ff8a80; font-weight: 600; margin-right: 6px; }
+  .addrOptions button .tagE { color: #82b1ff; font-weight: 600; margin-right: 6px; }
+  .addrOptions button .none { color: var(--muted); font-style: italic; }
   footer {
     color: var(--muted);
     font-size: 0.78rem;
@@ -265,6 +308,21 @@
   <button class="modebtn active" data-mode="explore">Explore</button>
   <button class="modebtn" data-mode="quiz">Quiz Me</button>
   <button class="modebtn" data-mode="address">Addresses</button>
+  <button class="modebtn" data-mode="apparatus">Apparatus</button>
+</div>
+
+<div class="rangebar" id="rangeBar">
+  <span class="lbl">Practice stations</span>
+  <select id="rangeFrom" aria-label="From station"></select>
+  <span>to</span>
+  <select id="rangeTo" aria-label="To station"></select>
+  <div class="presets" id="rangePresets">
+    <button data-from="1" data-to="27">All</button>
+    <button data-from="1" data-to="9">1&ndash;9</button>
+    <button data-from="10" data-to="18">10&ndash;18</button>
+    <button data-from="19" data-to="27">19&ndash;27</button>
+  </div>
+  <span class="count" id="rangeCount"></span>
 </div>
 
 <div class="quizbar" id="quizbar">
@@ -356,6 +414,69 @@ let score = 0;
 let attempts = 0;
 let awaitingAnswer = true;
 
+const rangeBar = document.getElementById('rangeBar');
+const rangeFrom = document.getElementById('rangeFrom');
+const rangeTo = document.getElementById('rangeTo');
+const rangePresets = document.getElementById('rangePresets');
+const rangeCount = document.getElementById('rangeCount');
+const ALL_NUMS = Object.keys(STATIONS).sort((a, b) => a - b);
+let rangeLo = 1;
+let rangeHi = ALL_NUMS.length;
+try {
+  const saved = JSON.parse(localStorage.getItem('wfpsRange') || 'null');
+  if (saved && saved.lo >= 1 && saved.hi <= ALL_NUMS.length && saved.lo <= saved.hi) {
+    rangeLo = saved.lo; rangeHi = saved.hi;
+  }
+} catch (e) {}
+
+ALL_NUMS.forEach(n => {
+  rangeFrom.add(new Option(n, n));
+  rangeTo.add(new Option(n, n));
+});
+
+function inRange() {
+  return ALL_NUMS.filter(n => +n >= rangeLo && +n <= rangeHi);
+}
+
+// Wrong-answer candidates: stations inside the practice range first, then the rest.
+function distractorPool(target) {
+  const inside = shuffle(inRange().filter(n => n !== target));
+  const outside = shuffle(ALL_NUMS.filter(n => n !== target && !inside.includes(n)));
+  return inside.concat(outside);
+}
+
+function syncRangeUI() {
+  rangeFrom.value = String(rangeLo);
+  rangeTo.value = String(rangeHi);
+  rangePresets.querySelectorAll('button').forEach(b => {
+    b.classList.toggle('on', +b.dataset.from === rangeLo && +b.dataset.to === rangeHi);
+  });
+  const c = rangeHi - rangeLo + 1;
+  rangeCount.textContent = `${c} station${c === 1 ? '' : 's'}`;
+}
+
+function setRange(lo, hi) {
+  if (lo > hi) [lo, hi] = [hi, lo];
+  rangeLo = lo; rangeHi = hi;
+  try { localStorage.setItem('wfpsRange', JSON.stringify({ lo, hi })); } catch (e) {}
+  syncRangeUI();
+  if (mode === 'quiz') startQuiz();
+  else if (mode === 'address') startAddrQuiz();
+  else if (mode === 'apparatus') startAppQuiz();
+}
+
+rangeFrom.addEventListener('change', () => setRange(+rangeFrom.value, rangeHi));
+rangeTo.addEventListener('change', () => setRange(rangeLo, +rangeTo.value));
+rangePresets.querySelectorAll('button').forEach(b => {
+  b.addEventListener('click', () => setRange(+b.dataset.from, +b.dataset.to));
+});
+
+let appOrder = [];
+let appIndex = 0;
+let appScoreVal = 0;
+let appAttempts = 0;
+let appAwaiting = true;
+
 let addrOrder = [];
 let addrIndex = 0;
 let addrScoreVal = 0;
@@ -392,7 +513,7 @@ function shuffle(arr) {
 }
 
 function startQuiz() {
-  quizOrder = shuffle(Object.keys(STATIONS));
+  quizOrder = shuffle(inRange());
   quizIndex = 0;
   score = 0;
   attempts = 0;
@@ -419,7 +540,7 @@ function fullAddress(num) {
 }
 
 function startAddrQuiz() {
-  addrOrder = shuffle(Object.keys(STATIONS));
+  addrOrder = shuffle(inRange());
   addrIndex = 0;
   addrScoreVal = 0;
   addrAttempts = 0;
@@ -442,8 +563,7 @@ function nextAddrQuestion() {
   addrScore.textContent = `Score: ${addrScoreVal} / ${addrAttempts}`;
   addrQuestion.textContent = `What is the address of Station ${target}?`;
 
-  const otherNums = Object.keys(STATIONS).filter(n => n !== target);
-  const wrongNums = shuffle(otherNums).slice(0, 3);
+  const wrongNums = distractorPool(target).slice(0, 3);
   const optionNums = shuffle([target, ...wrongNums]);
 
   addrOptions.innerHTML = '';
@@ -472,6 +592,98 @@ function nextAddrQuestion() {
         addrIndex++;
         nextAddrQuestion();
       }, 1400);
+    });
+    addrOptions.appendChild(btn);
+  });
+}
+
+// Renumber a unit that carries its hall number (E4, PU04, R4) to another hall's number,
+// so wrong answers look like real lineups instead of giving the answer away.
+function renumberUnit(unit, fromNum, toNum) {
+  const m = unit.match(/^([A-Z]+)(\d+)(.*)$/);
+  if (!m || +m[2] !== +fromNum) return unit;
+  const digits = m[2].length >= 2 && +fromNum < 10 ? String(toNum).padStart(2, '0') : String(toNum);
+  return m[1] + digits + m[3];
+}
+
+function lineupFor(src, asNum) {
+  const s = STATIONS[src];
+  return {
+    fire: (s.fire || []).map(u => renumberUnit(u, src, asNum)),
+    ems: (s.ems || []).map(u => renumberUnit(u, src, asNum))
+  };
+}
+
+function lineupKey(l) { return l.fire.join(',') + '|' + l.ems.join(','); }
+
+function lineupHTML(l) {
+  const f = l.fire.length ? l.fire.join(', ') : '<span class="none">none</span>';
+  const e = l.ems.length ? l.ems.join(', ') : '<span class="none">none</span>';
+  return `<span class="optline"><span class="tagF">Fire</span>${f}</span><span class="optline"><span class="tagE">EMS</span>${e}</span>`;
+}
+
+function startAppQuiz() {
+  appOrder = shuffle(inRange());
+  appIndex = 0;
+  appScoreVal = 0;
+  appAttempts = 0;
+  appAwaiting = true;
+  nextAppQuestion();
+}
+
+function revealApp(target, chosenBtn) {
+  const buttons = addrOptions.querySelectorAll('button');
+  buttons.forEach(b => {
+    b.disabled = true;
+    if (b.dataset.correct === '1') b.classList.add('correct');
+  });
+  if (chosenBtn && chosenBtn.dataset.correct !== '1') chosenBtn.classList.add('incorrect');
+}
+
+function nextAppQuestion() {
+  appAwaiting = true;
+  addrFeedback.textContent = '';
+  if (appIndex >= appOrder.length) {
+    addrPrompt.textContent = `Done! Final score: ${appScoreVal} / ${appAttempts}`;
+    addrQuestion.textContent = '';
+    addrOptions.innerHTML = '';
+    return;
+  }
+  const target = appOrder[appIndex];
+  addrPrompt.textContent = `Question ${appIndex + 1} of ${appOrder.length}`;
+  addrScore.textContent = `Score: ${appScoreVal} / ${appAttempts}`;
+  addrQuestion.textContent = `What apparatus is stationed at Station ${target}?`;
+
+  const correct = lineupFor(target, target);
+  const seen = new Set([lineupKey(correct)]);
+  const options = [{ lineup: correct, ok: true }];
+  for (const n of distractorPool(target)) {
+    if (options.length >= 4) break;
+    const l = lineupFor(n, target);
+    const k = lineupKey(l);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    options.push({ lineup: l, ok: false });
+  }
+
+  addrOptions.innerHTML = '';
+  shuffle(options).forEach(opt => {
+    const btn = document.createElement('button');
+    btn.innerHTML = lineupHTML(opt.lineup);
+    btn.dataset.correct = opt.ok ? '1' : '0';
+    btn.addEventListener('click', () => {
+      if (!appAwaiting) return;
+      appAwaiting = false;
+      appAttempts++;
+      revealApp(target, btn);
+      if (opt.ok) {
+        appScoreVal++;
+        addrFeedback.textContent = 'Correct!';
+      } else {
+        addrFeedback.textContent = `Not quite — the green one is Station ${target}'s lineup.`;
+      }
+      addrScore.textContent = `Score: ${appScoreVal} / ${appAttempts}`;
+      setTimeout(() => { appIndex++; nextAppQuestion(); }, 1800);
     });
     addrOptions.appendChild(btn);
   });
@@ -517,6 +729,7 @@ modebtns.forEach(btn => {
     quizbar.classList.remove('show');
     addrBar.classList.remove('show');
     addrWrap.classList.remove('show');
+    rangeBar.classList.toggle('show', mode !== 'explore');
     mapwrap.style.display = 'block';
     panel.style.display = 'block';
 
@@ -529,6 +742,12 @@ modebtns.forEach(btn => {
       addrBar.classList.add('show');
       addrWrap.classList.add('show');
       startAddrQuiz();
+    } else if (mode === 'apparatus') {
+      mapwrap.style.display = 'none';
+      panel.style.display = 'none';
+      addrBar.classList.add('show');
+      addrWrap.classList.add('show');
+      startAppQuiz();
     } else {
       panel.innerHTML = '<div class="placeholder">Click a district on the map to see the hall number, address, and apparatus.</div>';
     }
@@ -536,6 +755,17 @@ modebtns.forEach(btn => {
 });
 
 addrSkipBtn.addEventListener('click', () => {
+  if (mode === 'apparatus') {
+    if (!appAwaiting) return;
+    appAwaiting = false;
+    appAttempts++;
+    const target = appOrder[appIndex];
+    revealApp(target, null);
+    addrFeedback.textContent = `Skipped — the green one is Station ${target}'s lineup.`;
+    addrScore.textContent = `Score: ${appScoreVal} / ${appAttempts}`;
+    setTimeout(() => { appIndex++; nextAppQuestion(); }, 1600);
+    return;
+  }
   if (mode !== 'address' || !addrAwaiting) return;
   addrAttempts++;
   const target = addrOrder[addrIndex];
@@ -553,7 +783,8 @@ addrSkipBtn.addEventListener('click', () => {
   }, 1200);
 });
 
-addrRestartBtn.addEventListener('click', startAddrQuiz);
+addrRestartBtn.addEventListener('click', () => mode === 'apparatus' ? startAppQuiz() : startAddrQuiz());
+syncRangeUI();
 
 skipBtn.addEventListener('click', () => {
   if (mode !== 'quiz' || !awaitingAnswer) return;
